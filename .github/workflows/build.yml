@@ -1,0 +1,101 @@
+name: Build AcadeMind Windows App
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:   # lets you trigger the build manually from GitHub
+
+jobs:
+  build-windows:
+    name: Build Windows Installer
+    runs-on: windows-latest
+
+    steps:
+      # ── 1. Checkout source code ──────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Node.js ────────────────────────────────
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # ── 3. Generate a placeholder icon if none exists ─────
+      #       (Replace assets/icon.ico with your real icon)
+      - name: Create placeholder icon (if missing)
+        shell: powershell
+        run: |
+          if (-not (Test-Path "assets/icon.ico")) {
+            Write-Host "No icon found - creating placeholder..."
+            # Download a simple open-source placeholder icon
+            $url = "https://raw.githubusercontent.com/electron/electron/main/default_app/icon.ico"
+            try {
+              Invoke-WebRequest -Uri $url -OutFile "assets/icon.ico" -ErrorAction Stop
+              Write-Host "Placeholder icon downloaded."
+            } catch {
+              Write-Host "Could not download placeholder - electron-builder will use default."
+            }
+          } else {
+            Write-Host "Icon found at assets/icon.ico"
+          }
+
+      # ── 4. Install dependencies ───────────────────────────
+      - name: Install npm dependencies
+        run: npm ci
+
+      # ── 5. Build Windows installer + portable exe ─────────
+      - name: Build Windows (NSIS installer + portable)
+        run: npm run build:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 6. List build output ──────────────────────────────
+      - name: List dist folder
+        shell: powershell
+        run: Get-ChildItem -Recurse dist/
+
+      # ── 7. Upload NSIS installer as artifact ─────────────
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AcadeMind-Windows-Installer
+          path: dist/*.exe
+          retention-days: 30
+
+  # ── OPTIONAL: Create a GitHub Release when you push a tag ──
+  release:
+    name: Publish GitHub Release
+    needs: build-windows
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: AcadeMind-Windows-Installer
+          path: release-files/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: AcadeMind ${{ github.ref_name }}
+          body: |
+            ## AcadeMind Study Dashboard ${{ github.ref_name }}
+
+            ### Installation
+            - **AcadeMind-Setup-*.exe** — Full installer (recommended)  
+            - **AcadeMind-*.exe** (Portable) — No install needed, run anywhere
+
+            ### What's New
+            See [CHANGELOG.md](CHANGELOG.md) for details.
+          files: release-files/*.exe
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
